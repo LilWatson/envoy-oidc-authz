@@ -1,0 +1,34 @@
+version: 3
+
+env:
+  cluster_name: envoy-jwt-claims
+
+tasks:
+
+  # Dev Cluster
+  setup:
+    cmds:
+      - kind create cluster --name=$cluster_name --config=./k8s/config.yaml
+      - task: apply
+      - kubectl apply -f k8s/kind-rbac/rbac.yaml
+  teardown:
+    cmds:
+      - kind delete cluster --name=$cluster_name
+  full-restart:
+    cmds:
+      - task: teardown
+      - task: setup
+
+  # Application
+  apply:
+    cmds:
+      - task: apply-envoy
+      - task: apply-keycloak
+  apply-envoy:
+    cmds:
+      - kubectl replace --force -k ./k8s/envoy-app
+      - kubectl wait --for=condition=available --timeout=120s deployment/envoy
+  apply-keycloak:
+    cmds:
+      - kubectl replace --force -k ./k8s/keycloak
+      - kubectl wait --for=condition=available --timeout=120s deployment/keycloak

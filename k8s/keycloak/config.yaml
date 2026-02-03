@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-realm
+data:
+  demo-realm.json: |
+    {
+      "realm": "demo",
+      "enabled": true,
+
+      "loginWithEmailAllowed": true,
+      "registrationAllowed": false,
+      "resetPasswordAllowed": false,
+      "editUsernameAllowed": false,
+
+      "clients": [
+        {
+          "clientId": "my-app",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "redirectUris": [
+            "http://localhost:3000/*",
+            "http://localhost:8080/*"
+          ],
+          "protocolMappers": [
+            {
+              "name": "aad_groups",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-group-membership-mapper",
+              "config": {
+                "full.path": "false",
+                "claim.name": "aad_groups",
+                "jsonType.label": "String",
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true"
+              }
+            }
+          ]
+        }
+      ],
+
+      "groups": [
+        { "name": "test-group" },
+        { "name": "other-group" }
+      ],
+
+      "users": [
+        {
+          "username": "test",
+          "enabled": true,
+          "email": "test@example.com",
+          "emailVerified": true,
+          "firstName": "Test",
+          "lastName": "User",
+          "requiredActions": [],
+          "credentials": [
+            { "type": "password", "value": "test", "temporary": false }
+          ],
+          "groups": ["test-group", "other-group"]
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-admin
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN: admin
+  KEYCLOAK_ADMIN_PASSWORD: admin

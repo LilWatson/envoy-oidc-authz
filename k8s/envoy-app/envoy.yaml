@@ -1,0 +1,190 @@
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          internal_address_config:
+            cidr_ranges:
+            - address_prefix: 10.0.0.0
+              prefix_len: 8
+
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: httpecho_service
+
+          http_filters:
+
+          - name: envoy.filters.http.jwt_authn
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+              providers:
+                keycloak:
+                  issuer: "http://localhost:30000/realms/demo"
+                  from_headers: 
+                  - name: Authorization
+                    value_prefix: 'Bearer '
+                  - name: x-id-token
+                  remote_jwks:
+                    http_uri:
+                      uri: http://keycloak.default.svc.cluster.local/realms/demo/protocol/openid-connect/certs
+                      cluster: keycloak
+                      timeout: 1s
+                    cache_duration:
+                      seconds: 300
+                  forward: true
+                  payload_in_metadata: jwt_payload
+                  jwt_cache_config:
+                    jwt_cache_size: 100
+                kind:
+                  issuer: "https://kubernetes.default.svc.cluster.local"
+                  from_headers: 
+                  - name: Authorization
+                    value_prefix: 'Bearer '
+                  remote_jwks:
+                    http_uri:
+                      uri: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
+                      cluster: kind
+                      timeout: 1s
+                    cache_duration:
+                      seconds: 300
+                  forward: true
+                  payload_in_metadata: jwt_payload
+                  jwt_cache_config:
+                    jwt_cache_size: 100
+              rules:
+              - match:
+                  prefix: /
+                requires:
+                  requires_any:
+                    requirements:
+                      - provider_name: keycloak
+                      - provider_name: kind
+          
+          - name: envoy.filters.http.rbac
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+              # Deny by default
+              shadow_rules: {}
+              # Allow Rules
+              rules:
+                action: ALLOW
+                policies:
+                  
+                  allow-read:
+                    principals:
+                      - metadata:
+                          filter: envoy.filters.http.jwt_authn
+                          path:
+                            - key: jwt_payload
+                            - key: aad_groups
+                          value:
+                            list_match:
+                              one_of:
+                                string_match:
+                                  exact: test-group
+                    permissions:
+                      and_rules:
+                        rules:
+                          - header:
+                              name: X-Scope-OrgID
+                              string_match:
+                                exact: pvt.local-development.test
+                          - url_path:
+                              path: 
+                                exact: "/read"
+                  
+                  allow-write:
+                    principals:
+                      - metadata:
+                          filter: envoy.filters.http.jwt_authn
+                          path:
+                            - key: jwt_payload
+                            - key: iss
+                          value:
+                            string_match:
+                              exact: "https://kubernetes.default.svc.cluster.local"
+                    permissions:
+                      and_rules:
+                        rules:
+                          - header:
+                              name: X-Scope-OrgID
+                              string_match:
+                                exact: pvt.local-development.test
+                          - header:
+                              name: :method
+                              string_match:
+                                exact: POST
+                          - url_path:
+                              path: 
+                                exact: "/write"
+
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: httpecho_service
+    connect_timeout: 5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: httpecho_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: httpecho.default.svc.cluster.local
+                port_value: 80
+  - name: keycloak
+    connect_timeout: 5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: keycloak
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: keycloak.default.svc.cluster.local
+                port_value: 80
+  - name: kind
+    type: STRICT_DNS
+    connect_timeout: 2s
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: kind
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: kubernetes.default.svc.cluster.local
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_socket.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: kubernetes.default.svc.cluster.local
+        common_tls_context:
+          validation_context:
+            trusted_ca:
+              filename: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
